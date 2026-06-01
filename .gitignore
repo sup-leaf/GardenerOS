@@ -6,3 +6,18 @@
 Cargo.lock
 *.tar.xz
 qemu-5.2.0.tar.xz
+
+# Auto-generated link script
+os/src/link_app.S
+
+# Binary files
+*.bin
+*.elf
+
+# IDE
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
