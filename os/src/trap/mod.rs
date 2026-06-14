@@ -1,36 +1,58 @@
+use riscv::register::stvec::Stvec;
 mod context;
 
 use core::arch::global_asm;
-use riscv::register::{stvec, scause, stval};
-use riscv::register::stvec::Stvec;
+use core::arch::asm;
+use riscv::register::{
+    stvec,
+    scause,
+    stval,
+    sie,
+};
 use crate::syscall::syscall;
-use crate::task::{exit_current_and_run_next, suspend_current_and_run_next};
+use crate::task::{
+    exit_current_and_run_next,
+    suspend_current_and_run_next,
+    current_user_token,
+    current_trap_cx,
+};
 use crate::timer::set_next_trigger;
+use crate::config::{TRAP_CONTEXT, TRAMPOLINE};
 
 global_asm!(include_str!("trap.S"));
 
 pub use context::TrapContext;
 
 pub fn init() {
-    unsafe extern "C" { fn __alltraps(); }
+    set_kernel_trap_entry();
+}
+
+fn set_kernel_trap_entry() {
     unsafe {
-        let stvec_val = Stvec::from_bits(__alltraps as usize);
-        stvec::write(stvec_val);
+        stvec::write(Stvec::from_bits(trap_from_kernel as usize));
+    }
+}
+
+fn set_user_trap_entry() {
+    unsafe {
+        stvec::write(Stvec::from_bits(TRAMPOLINE));
     }
 }
 
 #[unsafe(no_mangle)]
-pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
+pub fn trap_handler() -> ! {
+    set_kernel_trap_entry();
+    let cx = current_trap_cx();
     let scause_val = scause::read().bits();
     let stval_val = stval::read();
-
+    
     match scause_val {
         8 => {
             cx.sepc += 4;
             cx.x[10] = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]) as usize;
         }
         15 | 7 => {
-            println!("[kernel] PageFault in application, core dumped.");
+            println!("[kernel] PageFault in application, bad addr = {:#x}, bad instruction = {:#x}, core dumped.", stval_val, cx.sepc);
             exit_current_and_run_next();
         }
         2 => {
@@ -45,9 +67,36 @@ pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
             panic!("Unsupported trap {}, stval = {:#x}!", scause_val, stval_val);
         }
     }
-    cx
+    trap_return();
+}
+
+#[unsafe(no_mangle)]
+pub fn trap_return() -> ! {
+    set_user_trap_entry();
+    let trap_cx_ptr = TRAP_CONTEXT;
+    let user_satp = current_user_token();
+    unsafe extern "C" {
+        fn __alltraps();
+        fn __restore();
+    }
+    let restore_va = __restore as usize - __alltraps as usize + TRAMPOLINE;
+    unsafe {
+        asm!(
+            "fence.i",
+            "jr {restore_va}",
+            restore_va = in(reg) restore_va,
+            in("a0") trap_cx_ptr,
+            in("a1") user_satp,
+            options(noreturn)
+        );
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn trap_from_kernel() -> ! {
+    panic!("a trap from kernel!");
 }
 
 pub fn enable_timer_interrupt() {
-    unsafe { riscv::register::sie::set_stimer(); }
+    unsafe { sie::set_stimer(); }
 }
