@@ -43,28 +43,35 @@ fn set_user_trap_entry() {
 pub fn trap_handler() -> ! {
     set_kernel_trap_entry();
     let cx = current_trap_cx();
-    let scause_val = scause::read().bits();
-    let stval_val = stval::read();
-    
+    let scause = scause::read();
+    let scause_val = scause.bits();
+    let stval = stval::read();
     match scause_val {
         8 => {
             cx.sepc += 4;
-            cx.x[10] = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]) as usize;
+            let result = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]);
+            let cx = current_trap_cx();
+            cx.x[10] = result as usize;
         }
-        15 | 7 => {
-            println!("[kernel] PageFault in application, bad addr = {:#x}, bad instruction = {:#x}, core dumped.", stval_val, cx.sepc);
-            exit_current_and_run_next();
+        15 | 7 | 1 | 12 | 5 | 13 => {
+            println!(
+                "[kernel] {:?} in application, bad addr = {:#x}, bad instruction = {:#x}, core dumped.",
+                scause_val,
+                stval,
+                current_trap_cx().sepc,
+            );
+            exit_current_and_run_next(-2);
         }
         2 => {
             println!("[kernel] IllegalInstruction in application, core dumped.");
-            exit_current_and_run_next();
+            exit_current_and_run_next(-3);
         }
         0x8000000000000005 => {
             set_next_trigger();
             suspend_current_and_run_next();
         }
         _ => {
-            panic!("Unsupported trap {}, stval = {:#x}!", scause_val, stval_val);
+            panic!("Unsupported trap {:#x}, stval = {:#x}!", scause_val, stval);
         }
     }
     trap_return();

@@ -6,7 +6,7 @@ KERNEL_BIN := $(KERNEL_ELF).bin
 DISASM_TMP := target/$(TARGET)/$(MODE)/asm
 
 # BOARD
-SBI ?= opensbi
+SBI ?= rustsbi
 BOOTLOADER := ../bootloader/$(SBI).bin
 
 # KERNEL ENTRY
@@ -47,7 +47,8 @@ disasm-vim: kernel
 run: build
 	@qemu-system-riscv64 \
 		-machine virt \
-		-nographic \
+		-serial mon:stdio \
+		-display none \
 		-bios $(BOOTLOADER) \
 		-device loader,file=$(KERNEL_BIN),addr=$(KERNEL_ENTRY_PA)
 
